@@ -1,9 +1,13 @@
 ---
 name: vector-memory-self-evolution
-description: "十层主动记忆系统 v4.2.0 - 基于 Qdrant + SiliconFlow Qwen3-Embedding-4B，融合艾宾浩斯遗忘曲线强化 + MiniMax LLM + Brain-v1.1.8 SessionStore/Fragment/Router/Checkpoint 完整整合。"
-version: 4.2.0
+description: "十层主动记忆系统 v4.3.0 - 基于 Qdrant + Qwen3-Embedding-4B，融合艾宾浩斯遗忘曲线 + MiniMax LLM + Brain-v1.1.8 完整能力。统一搜索入口 brain_agent.py 调用 hybrid_search(BM25+Vector+RRF)。"
+version: 4.3.0
 author: 凌凌柒
-changelog: "4.2.0 - 深度整合 Brain-v1.1.8：新增 SessionStore(会话持久化)、Fragment标准接口、Pre-checkpoint快照、TaskRouter任务路由决策引擎、ContextBuilder智能上下文组装"
+changelog: |
+  4.3.0 - 搜索链融会贯通：memory_api.search() → hybrid_search(BM25+Vector+RRF) → Ebbinghaus重排；brain_agent.py 升级为统一调度中枢；L10路由器接入混合搜索
+  4.2.0 - 深度整合 Brain-v1.1.8：SessionStore/Fragment/Router/Checkpoint/ContextBuilder
+  4.1.0 - 10层架构 + 周期协调器
+  4.0.0 - 初始版本
 ---
 
 # 十层主动记忆系统 v4.2.0
@@ -118,6 +122,31 @@ CLI:
 | `memory_api.py` | L03-L04 | 结构化记忆 + Qdrant 统一接口 |
 | `memory_reinforcement.py` | L04→L09 | 艾宾浩斯遗忘曲线强化 + 归档 |
 | `qdrant_store.py` | L04 | Qdrant REST API |
+
+## 🤖 BrainAgent 统一入口（v4.3.0 新增）
+
+`brain_agent.py` 是整个系统的统一调度中枢，串联所有模块：
+
+```
+brain_agent.execute(task)
+  1. confidence_check()     → 置信度评估（危险度打分）
+  2. pre_checkpoint()       → 必要时创建任务快照
+  3. route_task()           → 任务路由决策（拆分/模型/验证）
+  4. ContextBuilder()       → 组装智能上下文
+  5. increment_counter()    → 递增会话轮次
+  6. session_store.save()   → 持久化会话快照
+  → 返回完整执行链路 JSON
+```
+
+**CLI 用法：**
+```bash
+python3 brain_agent.py run "调研天气API"         # 完整流程
+python3 brain_agent.py confidence "删除文件"      # 置信度评估
+python3 brain_agent.py route "多平台内容发布"    # 任务路由
+python3 brain_agent.py context -q "用户偏好"     # 组装上下文
+python3 brain_agent.py cycle 30min              # Cron 周期调度
+python3 brain_agent.py capture error "OAuth失败" "token过期"  # 捕获记忆
+```
 
 ## 周期协调器
 
