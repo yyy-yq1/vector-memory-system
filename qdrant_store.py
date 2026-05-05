@@ -128,6 +128,8 @@ def search_memories(query: str, n_results: int = 5, memory_type: str = None) -> 
             "type": r["payload"].get("type"),
             "source": r["payload"].get("source"),
             "timestamp": r["payload"].get("timestamp"),
+            "local_path": r["payload"].get("local_path"),
+            "doc_url": r["payload"].get("doc_url"),
             "score": r["score"]
         }
         for r in result.get("result", [])

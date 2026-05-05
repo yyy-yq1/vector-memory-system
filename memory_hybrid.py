@@ -193,7 +193,11 @@ def hybrid_search(query: str, n_results: int = 5) -> list[dict]:
             'type': r.get('type', ''),
             'score': r.get('score', 0),
             'rank': i + 1,
-            'method': 'vector'
+            'method': 'vector',
+            # 保留 hybrid search 所需的全部字段
+            'local_path': r.get('local_path') or '',
+            'doc_url':     r.get('doc_url')     or '',
+            'source':      r.get('source')      or '',
         } for i, r in enumerate(raw_vec)]
     except Exception as e:
         print(f"向量搜索失败: {e}", file=sys.stderr)

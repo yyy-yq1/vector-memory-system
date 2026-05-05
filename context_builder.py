@@ -94,20 +94,34 @@ class ContextBuilder:
                     self.add_section("📋 当前会话状态", state_text, priority=0.95)
 
     def add_memory_search(self, query: str, n_results: int = 5):
-        """添加相关记忆（向量搜索）"""
+        """添加相关记忆（混合搜索 + 原文追加）"""
         try:
             import sys
             sys.path.insert(0, str(WORKSPACE / 'skills' / 'skills' / 'vector-memory-self-evolution'))
-            from memory_api import search
-            results = search(query, n_results=n_results)
-            if results:
-                texts = []
-                for r in results:
-                    text = r.get('text', '')[:200]
-                    frag_type = r.get('type', '')
-                    texts.append(f"[{frag_type}] {text}")
-                memory_text = '\n'.join(texts)
-                self.add_section("🧠 相关记忆", memory_text, priority=0.7)
+            from memory_hybrid import hybrid_search
+            results = hybrid_search(query, n_results=n_results)
+            if not results:
+                return
+            texts = []
+            for r in results:
+                frag_type = r.get('type', '')
+                text_snippet = r.get('text', '')[:300]
+                local_path = r.get('local_path', '')
+                # 有本地原文时读全文，避免截断丢失细节
+                if local_path and Path(local_path).exists():
+                    try:
+                        full = Path(local_path).read_text(encoding='utf-8')
+                        if len(full) > 2000:
+                            full = full[:2000] + '\n...（已截断）'
+                        texts.append(f"[{frag_type} | 完整文档: {local_path}]\n{full}")
+                        continue
+                    except Exception:
+                        pass
+                score_info = f"score={r.get('score',0):.3f}" if r.get('score') else ""
+                src_info = r.get('source', '')[:60]
+                texts.append(f"[{frag_type}] {text_snippet}  {score_info} [{src_info}]")
+            memory_text = '\n\n'.join(texts)
+            self.add_section("🧠 相关记忆（混合搜索）", memory_text, priority=0.7)
         except Exception as e:
             pass
 
