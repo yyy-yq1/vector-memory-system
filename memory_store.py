@@ -8,6 +8,10 @@ L2 文件写入由 memory_api.capture() 单独处理
   - 状态文件读写使用 fcntl 文件锁（进程安全）
 """
 import json
+import datetime
+import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -81,46 +85,67 @@ def _save_turns_state(state):
 def _load_vectorize_state():
     """加载 .vectorize_state.json"""
     if VECTORIZE_STATE_FILE.exists():
-        with open(VECTORIZE_STATE_FILE) as f:
-            return json.load(f)
+        try:
+            with open(VECTORIZE_STATE_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass  # 文件损坏时返回默认空状态
     return {"synced_hashes": [], "last_sync": None}
 
-def _save_vectorize_state(state):
-    """保存 .vectorize_state.json（文件锁）"""
+def _save_vectorize_state(state: dict):
+    """保存 .vectorize_state.json（原子写 + 文件锁）"""
     import fcntl
-    with open(VECTORIZE_STATE_FILE, 'w') as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        try:
-            json.dump(state, f, ensure_ascii=False, indent=2)
-        finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=VECTORIZE_STATE_FILE.parent, suffix='.json')
+    try:
+        with os.fdopen(tmp_fd, 'w') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        shutil.move(tmp_path, str(VECTORIZE_STATE_FILE))
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
 
 def _update_synced_hash(text: str):
-    """将 entry text 的 hash 记入状态文件（原子写 + 文件锁）"""
+    """将 entry text 的 hash 记入状态文件（原子写 + 文件锁）
+
+    Bug fix: 原使用 r+ 模式依赖文件存在，且存在 TOCTOU 竞争。
+    改为：先 load（文件不存在时返回默认 state），再原子写。
+    """
     import fcntl
     h = _entry_hash(text)
+
+    # 读取现有状态（文件不存在或损坏时使用默认空状态）
     state = {"synced_hashes": [], "last_sync": None}
     if VECTORIZE_STATE_FILE.exists():
-        with open(VECTORIZE_STATE_FILE, 'r+') as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            try:
+        try:
+            with open(VECTORIZE_STATE_FILE, 'r') as f:
                 state = json.load(f)
-                synced = set(state.get("synced_hashes", []))
-                synced.add(h)
-                state["synced_hashes"] = list(synced)
-                f.seek(0)
-                f.truncate()
-                json.dump(state, f, indent=2, ensure_ascii=False)
-            finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-    else:
-        state["synced_hashes"] = [h]
-        with open(VECTORIZE_STATE_FILE, 'w') as f:
+        except (json.JSONDecodeError, OSError):
+            pass  # 文件损坏时以空状态重新初始化
+
+    synced = set(state.get("synced_hashes", []))
+    synced.add(h)
+    state["synced_hashes"] = list(synced)
+    state["last_sync"] = datetime.datetime.now().isoformat()
+
+    # 原子写：temp file + rename
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=VECTORIZE_STATE_FILE.parent, suffix='.json')
+    try:
+        with os.fdopen(tmp_fd, 'w') as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
-                json.dump(state, f, indent=2, ensure_ascii=False)
+                json.dump(state, f, ensure_ascii=False, indent=2)
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        shutil.move(tmp_path, str(VECTORIZE_STATE_FILE))
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
 
 def _trigger_sync():
     """触发增量同步（每 TURN_THRESHOLD 轮对话执行一次）"""
