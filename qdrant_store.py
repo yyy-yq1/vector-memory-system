@@ -11,7 +11,7 @@ import hashlib
 import datetime
 import httpx
 
-from memory_consts import QDRANT_REST_URL, QDRANT_COLLECTION_NAME
+from memory_consts import QDRANT_REST_URL, QDRANT_COLLECTION_NAME, QDRANT_TIMEOUT
 from memory_config import config as _runtime_config
 from embedding_client import get_embedding, get_embeddings
 
@@ -23,7 +23,7 @@ def _get_client() -> httpx.Client:
     global _cached_client
     if _cached_client is None:
         _cached_client = httpx.Client(
-            from memory_consts import QDRANT_TIMEOUT; timeout=QDRANT_TIMEOUT,
+            timeout=QDRANT_TIMEOUT,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
     return _cached_client
