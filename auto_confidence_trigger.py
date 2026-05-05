@@ -53,10 +53,22 @@ def score_confidence(task: str) -> float:
     score = 1.0
 
     # Risk signals
+    # 极高危信号（一次性扣到无法挽回，必须单独检测）
+    catastrophic_signals = [
+        "rm -rf /", "rm -rf /*", "rm -rf /root", "rm -rf ~",
+        "dd if=", "mkfs.", "wipe -l", "shred -f",
+    ]
+    for sig in catastrophic_signals:
+        if sig in task:
+            return 0.0  # 最高危，直接拒绝
+
     irreversible_signals = [
-        "删除", "永久", "rm ", "drop ", "truncate", "delete ",
+        "删除", "永久", "drop ", "truncate", "delete ",
         "destroy", "wipe", "格式化", "format ",
     ]
+    # rm 命令单独处理（加分项，因为已单独检测 catastrophic）
+    if "rm " in task_lower:
+        score -= 0.1  # 普通 rm 风险较低
     external_signals = [
         "发送", "邮件", "发邮件", "email", "post ", "发布",
         "公开", "public ", "推送", "通知",

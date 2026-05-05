@@ -66,6 +66,10 @@ def _scan_skills_dirs() -> dict:
         if base.is_file():
             continue
         for item in base.iterdir():
+            # Skip hidden directories (e.g. .git, .refactor_iterations) and __pycache__
+            if item.name.startswith(".") or item.name == "__pycache__":
+                continue
+
             # Handle scoped packages like @openclaw/feishu
             if item.is_dir():
                 skill_dir = item
