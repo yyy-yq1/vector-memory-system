@@ -29,11 +29,14 @@ WARNING_THRESHOLD = 0.80  # 80%
 def estimate_tokens(text: str) -> int:
     """
     估算 token 数量
-    中文 *2, 英文 *1.3
+    中文 *2, 拉丁字母 *1.3, 其他字符(标点/数字/空格) *1.0
     """
+    if not text:
+        return 0
     chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
-    english_chars = len(text) - chinese_chars
-    return int(chinese_chars * 2 + english_chars * 1.3)
+    english_chars = sum(1 for c in text if ('a' <= c <= 'z') or ('A' <= c <= 'Z'))
+    other_chars = len(text) - chinese_chars - english_chars
+    return int(chinese_chars * 2 + english_chars * 1.3 + other_chars * 1.0)
 
 
 def get_latest_session() -> Path:
@@ -62,12 +65,18 @@ def get_current_tokens() -> int:
                 obj = json.loads(line)
                 # 尝试从消息内容中估算
                 content = ""
-                if "content" in obj:
-                    content = str(obj["content"])
-                elif "text" in obj:
-                    content = str(obj["text"])
-                elif "message" in obj:
-                    content = str(obj["message"])
+                raw = obj.get("content") or obj.get("text") or obj.get("message") or ""
+                # content 可能是 list（如 OpenClaw 消息格式 [{type, text}]）
+                if isinstance(raw, list):
+                    parts = []
+                    for block in raw:
+                        if isinstance(block, dict) and "text" in block:
+                            parts.append(str(block["text"]))
+                        elif isinstance(block, str):
+                            parts.append(block)
+                    content = " ".join(parts)
+                else:
+                    content = str(raw)
                 total += estimate_tokens(content)
             except (json.JSONDecodeError, KeyError):
                 pass

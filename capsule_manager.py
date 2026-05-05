@@ -16,6 +16,9 @@ import json
 import sys
 import os
 import hashlib
+import tempfile
+import shutil
+import fcntl
 from pathlib import Path
 
 # === 路径配置 ===
@@ -37,10 +40,35 @@ def load_capsules():
         return json.load(f)
 
 
+def _load_capsules_unlocked():
+    """Load capsules without locking (caller must hold lock)."""
+    if not CAPSULES_FILE.exists():
+        return {"capsules": []}
+    with open(CAPSULES_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_capsules_atomic(data):
+    """原子保存胶囊数据（写锁 + temp file + rename）"""
+    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(MEMORY_DIR), suffix=".json")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        shutil.move(tmp_path, str(CAPSULES_FILE))
+    except Exception:
+        if Path(tmp_path).exists():
+            Path(tmp_path).unlink()
+        raise
+
+
 def save_capsules(data):
-    """保存胶囊数据"""
-    with open(CAPSULES_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """保存胶囊数据（对外接口，写锁 + 原子rename）"""
+    save_capsules_atomic(data)
 
 
 def list_capsules():

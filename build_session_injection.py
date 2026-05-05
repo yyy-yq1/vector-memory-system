@@ -42,8 +42,13 @@ def read_file(path: Path, default: str = "") -> str:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return f.read()
-        except (IOError, UnicodeDecodeError):
-            pass
+        except (UnicodeDecodeError, IOError):
+            # 使用 errors='replace' 保留可见字符，不静默丢内容
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    return f.read()
+            except OSError:
+                pass
     return default
 
 

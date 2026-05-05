@@ -24,11 +24,14 @@ from pathlib import Path
 WORKSPACE = Path.home() / ".openclaw" / "workspace"
 MEMORY_DIR = WORKSPACE / "memory"
 BUFFER_PATH = MEMORY_DIR / "工作缓冲区.md"
-PRE_CHECKPOINT_SCRIPT = MEMORY_DIR.parent / "skills" / "vector-memory-self-evolution" / "pre_checkpoint.py"
 
-# Fallback: look for pre_checkpoint.py in skills dir
-SKILL_DIR = WORKSPACE / "skills" / "vector-memory-self-evolution"
-PRE_CHECKPOINT_SCRIPT_ALT = SKILL_DIR / "pre_checkpoint.py"
+# Correct path: double 'skills/' since skill lives under skills/skills/vector-memory-self-evolution/
+SKILL_DIR = WORKSPACE / "skills" / "skills" / "vector-memory-self-evolution"
+PRE_CHECKPOINT_SCRIPT = SKILL_DIR / "pre_checkpoint.py"
+
+# Fallback: old single-skills path (migration compat)
+SKILL_DIR_ALT = WORKSPACE / "skills" / "vector-memory-self-evolution"
+PRE_CHECKPOINT_SCRIPT_ALT = SKILL_DIR_ALT / "pre_checkpoint.py"
 
 
 # ─────────────────────────────────────────────
