@@ -217,11 +217,11 @@ def _sync_to_session_store(
         if append_decision:
             try:
                 loop.run_until_complete(
-                    store.save_decision({
-                        "topic": append_decision[:80],
-                        "content": append_decision,
-                        "source": "SESSION-STATE",
-                    })
+                    store.save_decision(
+                        append_decision[:80],
+                        append_decision,
+                        source="SESSION-STATE",
+                    )
                 )
             except Exception:
                 pass
@@ -229,11 +229,12 @@ def _sync_to_session_store(
         if append_action and store:
             try:
                 loop.run_until_complete(
-                    store.save_task({
-                        "title": append_action[:100],
-                        "status": "pending",
-                        "source": "SESSION-STATE",
-                    })
+                    store.save_task(
+                        append_action[:100],
+                        "pending",
+                        progress=None,
+                        details=f"来源: SESSION-STATE",
+                    )
                 )
             except Exception:
                 pass

@@ -147,7 +147,7 @@ context: {context}
     try:
         from memory_fragment import (
             MemoryFragment, skill, task, config,
-            conclusion, lesson, MemoryFragment
+            conclusion, lesson
         )
         pool = _get_fragment_pool()
         if pool is not None:
