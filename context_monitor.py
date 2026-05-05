@@ -21,7 +21,7 @@ from datetime import datetime
 
 # === 路径配置 ===
 WORKSPACE = Path.home() / ".openclaw/workspace"
-SESSION_DIR = WORKSPACE / "agents/main/sessions"
+SESSION_DIR = Path.home() / ".openclaw" / "agents/main/sessions"
 CONTEXT_WINDOW = 200000  # tokens
 WARNING_THRESHOLD = 0.80  # 80%
 

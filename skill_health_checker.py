@@ -29,7 +29,9 @@ DAYS_ABANDONED = 180
 
 # Skills directories to scan
 SKILL_SEARCH_PATHS = [
+    WORKSPACE / "skills" / "skills" / "vector-memory-self-evolution",
     WORKSPACE / "skills",
+    Path.home() / ".agents" / "skills",
     Path.home() / ".openclaw" / "npm" / "node_modules" / "@openclaw" / "feishu",
     Path.home() / ".local" / "share" / "pnpm" / "global" / "5" / ".pnpm",
 ]
@@ -91,15 +93,14 @@ def _scan_skills_dirs() -> dict:
                 if skill_md:
                     break
 
-            if skill_md:
-                mtime = skill_md.stat().st_mtime
-            else:
-                mtime = item.stat().st_mtime if item.exists() else 0
+            if not skill_md:
+                continue  # 只返回有 SKILL.md 的技能
 
+            mtime = skill_md.stat().st_mtime
             skills[name] = {
                 "path": str(item if item.is_dir() else item.parent),
                 "mtime": mtime,
-                "skill_md": str(skill_md) if skill_md else None,
+                "skill_md": str(skill_md),
             }
     return skills
 

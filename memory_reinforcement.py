@@ -40,14 +40,31 @@ ALPHA_BOOST = 0.25       # 强化力度系数
 
 def _load_metadata() -> dict:
     if METADATA_FILE.exists():
-        with open(METADATA_FILE) as f:
-            return json.load(f)
+        try:
+            with open(METADATA_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass  # 文件损坏时以空状态重新初始化
     return {"reinforcements": {}, "archive_candidates": []}
 
 
 def _save_metadata(data: dict):
-    with open(METADATA_FILE, 'w') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """原子写入元数据（temp file + rename + 文件锁）"""
+    import fcntl, shutil, tempfile, os
+    METADATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=METADATA_FILE.parent, suffix='.json')
+    try:
+        with os.fdopen(tmp_fd, 'w') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        shutil.move(tmp_path, str(METADATA_FILE))
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
 
 
 def _get_meta_id(point_id: str) -> str:
