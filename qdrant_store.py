@@ -49,9 +49,17 @@ def init_collection():
         print(f"集合 {QDRANT_COLLECTION_NAME} 已存在")
     except Exception:
         _api("/collections", method="PUT", data={
-            "vectors": {"size": dim, "distance": "Cosine"}
+            "vectors": {"size": dim, "distance": "Cosine"},
+            "hnsw_config": {
+                "m": 16,
+                "ef_construct": 200,
+                "full_scan_threshold": 500,
+            },
+            "optimizer_config": {
+                "indexing_threshold": 100,
+            },
         })
-        print(f"✅ 创建集合 {QDRANT_COLLECTION_NAME}，维度={dim}")
+        print(f"✅ 创建集合 {QDRANT_COLLECTION_NAME}，维度={dim}，HNSW m=16/ef_construct=200")
 
 def add_memory(text: str, memory_type: str, source: str = "", metadata: dict = None):
     """添加单条记忆（确定性 ID，同一文本不会重复添加）"""
