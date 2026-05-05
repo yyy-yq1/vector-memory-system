@@ -273,11 +273,21 @@ def apply_promotions(opportunities, dry_run=False):
     added = 0
     new_entries = []
 
+    # 提取 SOUL.md 中已有的规则内容（用于去重）
+    existing_rules = set()
+    import re
+    for line in content_str.split('\n'):
+        m = re.match(r'^-\s+\[[\d-]+\]\s+(.+)', line)
+        if m:
+            existing_rules.add(m.group(1).strip())
+
     for p in promotions:
-        rule_text = f"- [{timestamp}] {p['content']}"
-        if rule_text not in content_str:
-            new_entries.append(rule_text)
-            added += 1
+        rule_content = p['content'].strip()
+        if rule_content in existing_rules:
+            continue  # 已存在，跳过
+        rule_text = f"- [{timestamp}] {rule_content}"
+        new_entries.append(rule_text)
+        added += 1
 
     if added == 0:
         print("  所有规则已在 SOUL.md 中")

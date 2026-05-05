@@ -300,13 +300,10 @@ def _load_synced() -> set:
 
 
 def _save_hash(text: str):
-    h = _content_hash(text)
-    state = _load_vectorize_state()
-    synced = set(state.get("synced_hashes", []))
-    synced.add(h)
-    state["synced_hashes"] = list(synced)
-    state["last_sync"] = datetime.datetime.now().isoformat()
-    _save_vectorize_state(state)
+    """将 content hash 记入向量同步状态（委托给 memory_store._update_synced_hash）"""
+    # 复用 memory_store._update_synced_hash（已修复原子写 + 文件锁）
+    from memory_store import _update_synced_hash
+    _update_synced_hash(text)
 
 
 def _write_l2(typ: str, title: str, context: str, source: str = '') -> tuple[Path, bool]:
