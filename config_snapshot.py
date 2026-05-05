@@ -112,7 +112,7 @@ def list_snapshots():
     )
     if not snapshots:
         print("暂无快照")
-        return
+        return []
     print(f"{'文件名':<50} {'修改时间':<20} {'大小'}")
     print("-" * 90)
     for sp in snapshots:
@@ -123,6 +123,7 @@ def list_snapshots():
     history = load_md5_history()
     print(f"\n当前 MD5: {history.get('last_md5', 'unknown')}")
     print(f"最后检查: {history.get('last_check', 'unknown')}")
+    return snapshots
 
 
 def main():
