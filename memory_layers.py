@@ -83,7 +83,7 @@ def l1_write(current_task=None, key_context=None, pending=None,
              append_decision=None, append_fact=None, append_pref=None) -> bool:
     """写入 L1 工作内存（WAL 协议：响应前写入）"""
     from session_state import update, append_decision as _app_dec, \
-        append_fact as _app_fact, append_preference as _app_pref
+        append_key_fact as _app_fact, append_preference as _app_pref
     if append_decision:
         _app_dec(append_decision)
     if append_fact:
