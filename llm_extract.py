@@ -38,7 +38,7 @@ def _load_api_key() -> str:
             key = data.get('api_key', '')
             if key:
                 return key
-        except:
+        except Exception:
             pass
     # 环境变量
     return os.environ.get('MINIMAX_API_KEY', '')
