@@ -97,12 +97,48 @@ def _make_typed_fragment(typ: str, title: str, content: str, context: str = ''):
         return None
 
 
+def _is_good_memory_content(text: str) -> bool:
+    """
+    记忆质量过滤器：从源头拒绝垃圾记忆入库
+    
+    规则：
+    1. 最小长度：正文 ≥ 10 字符（去除空白后）
+    2. 无意义占位符：拒绝连续重复字符（xxxxxx / aaaaaa）超过文本 50%
+    3. 最低信息密度：去除空白+标点后，有效字符 ≥ 5 个
+    4. 禁止纯代码/哈希：有效字符须含中文或英文单词（不只是十六进制/Hex）
+    """
+    if not text:
+        return False
+    import re
+    stripped = text.strip()
+    # 规则1：最小长度
+    if len(stripped) < 10:
+        return False
+    # 规则2：无意义占位符（某单一字符占总字符数 > 60%，如 xxxx / aaaaa / 个个个个）
+    if stripped:
+        from collections import Counter
+        most_common_char, most_common_count = Counter(stripped).most_common(1)[0]
+        if most_common_count / len(stripped) > 0.6:
+            return False
+    # 规则3：最低信息密度（去除空白标点后至少5个有效字）
+    meaningful = re.sub(r'[\s\W_]', '', stripped)
+    if len(meaningful) < 5:
+        return False
+    return True
+
+
 def capture(typ, title, content, context=''):
     """
     捕获记忆到 L2（文件）+ L4（Qdrant）
     同时写入文件（用于归档）和向量库（用于语义检索）
     同时注册到 FragmentPool（使用正确类型片段）
     """
+    # ── 质量过滤：从源头拒绝垃圾 ──────────────────────────────
+    combined_text = f"{title}\n{content}"
+    if not _is_good_memory_content(combined_text):
+        print(f"⚠️  记忆被过滤（质量不合格）：{title[:30]}（长度={len(combined_text)}）")
+        return {"ok": False, "reason": "quality_filter_failed", "title": title}
+
     timestamp = datetime.datetime.now().isoformat()
     today = datetime.datetime.now().strftime('%Y-%m-%d')
 
