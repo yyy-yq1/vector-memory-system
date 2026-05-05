@@ -63,20 +63,26 @@ def get_current_tokens() -> int:
                 continue
             try:
                 obj = json.loads(line)
-                # 尝试从消息内容中估算
-                content = ""
-                raw = obj.get("content") or obj.get("text") or obj.get("message") or ""
-                # content 可能是 list（如 OpenClaw 消息格式 [{type, text}]）
-                if isinstance(raw, list):
+                # OpenClaw session: {"type":"message","message":{"role":"...","content":[{"type":"text","text":"..."}]}}
+                # 正确提取：obj.message.content[].text
+                msg_obj = obj.get("message", {})  # 顶层 message 字段（可能不存在）
+                if isinstance(msg_obj, dict):
+                    content_list = msg_obj.get("content", [])
+                else:
+                    content_list = obj.get("content", [])
+
+                if isinstance(content_list, list):
                     parts = []
-                    for block in raw:
+                    for block in content_list:
                         if isinstance(block, dict) and "text" in block:
                             parts.append(str(block["text"]))
                         elif isinstance(block, str):
                             parts.append(block)
                     content = " ".join(parts)
+                elif isinstance(content_list, str):
+                    content = content_list
                 else:
-                    content = str(raw)
+                    content = str(content_list)
                 total += estimate_tokens(content)
             except (json.JSONDecodeError, KeyError):
                 pass
