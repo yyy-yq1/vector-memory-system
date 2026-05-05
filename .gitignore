@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual env
+venv/
+.venv/
+env/
+
+# Qdrant data (local)
+data/
+*.db
+
+# Config with secrets
+memory_config.json
+config.json
+
+# Environment
+.env
+.env.*
+
+# macOS
+.DS_Store
+
+# Log files
+*.log
+watchdog-log.md
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OpenClaw workspace (don't track working files)
+memory/
+agents/
+HEARTBEAT.md
+TOOLS.md
+MEMORY.md
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Byte-compiled / optimized
+*.pyc

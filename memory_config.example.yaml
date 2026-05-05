@@ -1,0 +1,33 @@
+# memory_config.example.yaml
+# 配置文件示例 - 复制到 memory_config.yaml 并修改
+#
+# 优先级: 本文件 < 环境变量
+# 示例:
+#   export QDRANT_REST_URL=http://your-qdrant-host:6333
+#   export SILICONFLOW_API_KEY=sk-your-key
+
+qdrant:
+  rest_url: "http://127.0.0.1:6333"
+  grpc_url: "127.0.0.1:6334"
+  collection_name: "memories"
+  vector_dimension: 2560
+
+embedding:
+  provider: "siliconflow"
+  model: "Qwen/Qwen3-Embedding-4B"
+  # api_key: 建议通过环境变量 SILICONFLOW_API_KEY 设置
+  api_key: ""
+  base_url: "https://api.siliconflow.cn/v1"
+  timeout: 60
+
+memory:
+  workspace: "~/.openclaw/workspace"
+  memory_dir: "~/.openclaw/workspace/memory"
+  archive_dir: "~/.openclaw/workspace/memory_archive"
+  vector_db_dir: "~/.openclaw/workspace/vector_db"
+
+behavior:
+  turn_threshold: 5         # 每 N 轮对话触发一次向量同步
+  max_content_len: 10000     # 单条记忆最大字符数
+  archive_after_days: 30     # 超过 N 天自动归档
+  dedup_window_days: 7       # 去重窗口（天）
