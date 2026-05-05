@@ -133,7 +133,7 @@ class ContextBuilder:
                     ts = d.get('created_at', '')[:10]
                     texts.append(f"[{ts}] {topic}: {content}")
                 self.add_section("�的决定", '\n'.join(texts), priority=0.6)
-        except:
+        except Exception:
             pass
 
     def add_core_memory(self, query: str = ""):

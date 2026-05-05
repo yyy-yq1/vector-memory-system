@@ -306,7 +306,9 @@ def _log_watchdog_event(
     if event == "start":
         line = f"\n## [{timestamp}] WATCHDOG START\n- Task: {task}\n- Budget: {budget_info}\n"
     else:
-        line = f"- [{timestamp}] WATCHDOG END | Success: {result.get('success') if result else 'N/A'} | Attempts: {result.get('attempts') if result else 'N/A'}\n\n"
+        success = result.get('success', 'N/A') if result else 'N/A'
+        attempts = result.get('attempts', 'N/A') if result else 'N/A'
+        line = f"- [{timestamp}] WATCHDOG END | Success: {success} | Attempts: {attempts}\n\n"
 
     try:
         with open(WATCHDOG_LOG, "a", encoding="utf-8") as f:

@@ -560,7 +560,7 @@ def get_memory_architecture_summary() -> dict:
     l4_info = {}
     try:
         count()
-    except:
+    except Exception:
         pass
 
     l6_procedural = _load_procedural()

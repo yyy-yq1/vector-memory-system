@@ -331,7 +331,7 @@ def process_recent_sessions(sessions_dir: Path, hours: int = 24, force: bool = F
             mtime = datetime.datetime.fromtimestamp(tf.stat().st_mtime)
             if mtime < cutoff and not force:
                 break
-        except:
+        except Exception:
             pass
 
         try:

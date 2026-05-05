@@ -57,6 +57,23 @@ QDRANT_DATA_DIR = VECTOR_DB_DIR / 'qdrant_data'
 QDRANT_CONFIG_FILE = VECTOR_DB_DIR / 'qdrant_config.yaml'
 MEMORY_TYPES = ['error', 'correction', 'practice', 'event', 'gap']
 
+# ── Magic Number Constants ──────────────────────────────────────────────────────
+# 统一消魔法化：所有硬编码数字集中在这一节定义
+REVIEW_THRESHOLD = 20
+MAX_CPS_LEN = 500
+DEFAULT_TOP_K = 5
+RRF_K = 60
+MAX_BM25_CHARS = 500
+SNAPSHOT_MAX_TOKENS = 30000
+FRAGMENT_POOL_MAX_TOKENS = 500
+CONTEXT_BUILD_LIMIT = 10
+DAYS_LOW_FREQUENCY = 30
+DAYS_ABANDONED = 180
+QDRANT_TIMEOUT = 60.0
+EMBEDDING_BATCH_SIZE = 50
+SKILL_HEALTH_DAYS = 30
+WATCHDOG_LOG = MEMORY_DIR / 'watchdog.log'
+
 
 @lru_cache(maxsize=1)
 def load_config():

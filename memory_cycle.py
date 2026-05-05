@@ -218,7 +218,13 @@ def run_daily(quiet: bool = False) -> bool:
                         pat_dir = MEMORY_DIR / 'patterns'
                         pat_dir.mkdir(exist_ok=True)
                         pat_file = pat_dir / f"{datetime.datetime.now().strftime('%Y-%m-%d')}.md"
-                        pat_file.write_text(f"# 记忆规律 @ {datetime.datetime.now().isoformat()}\n\n## 分析输入\n{summary_text[:500]}\n\n## LLM 分析结果\n{reply}\n", encoding='utf-8')
+                        summary_excerpt = summary_text[:500]
+                        pat_file.write_text(
+                            f"# 记忆规律 @ {datetime.datetime.now().isoformat()}\n\n"
+                            f"## 分析输入\n{summary_excerpt}\n\n"
+                            f"## LLM 分析结果\n{reply}\n",
+                            encoding='utf-8'
+                        )
             except Exception as e:
                 results.append(f"L05 LLM ERR: {e}")
     except Exception as e:

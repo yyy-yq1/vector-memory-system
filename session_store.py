@@ -235,7 +235,7 @@ class SessionStore:
         try:
             dt = datetime.datetime.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")
             return (datetime.datetime.now() - dt).days <= days
-        except:
+        except Exception:
             return False
 
     # ── Tasks ─────────────────────────────────────────────

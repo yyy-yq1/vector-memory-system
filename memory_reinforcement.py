@@ -126,7 +126,7 @@ def calculate_fluid_score(base_similarity: float, point_id: str) -> float:
         try:
             created = datetime.datetime.fromisoformat(first_created)
             days_passed = (datetime.datetime.now() - created).total_seconds() / 86400
-        except:
+        except Exception:
             days_passed = 0
     else:
         days_passed = 0
@@ -208,7 +208,7 @@ def scan_for_forgetting(n_samples: int = 50) -> list[dict]:
             try:
                 created = datetime.datetime.fromisoformat(first_created)
                 days_passed = (datetime.datetime.now() - created).total_seconds() / 86400
-            except:
+            except Exception:
                 pass
 
         candidates.append({

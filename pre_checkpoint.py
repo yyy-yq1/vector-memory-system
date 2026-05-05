@@ -56,7 +56,7 @@ def _read_file(path: Path) -> str:
     try:
         if path.exists():
             return path.read_text(encoding='utf-8')
-    except:
+    except Exception:
         pass
     return ""
 
@@ -176,7 +176,7 @@ def complete_checkpoint(checkpoint_id: str, result: str = "完成") -> bool:
             data["result"] = result
             data["progress"].append(f"[{ts}] 任务完成: {result}")
             _atomic_write(cp_file, data)
-        except:
+        except Exception:
             pass
 
     return True
@@ -204,7 +204,7 @@ def add_progress(checkpoint_id: str, note: str):
             data = json.loads(cp_file.read_text())
             data.setdefault("progress", []).append(f"[{ts}] {note}")
             _atomic_write(cp_file, data)
-        except:
+        except Exception:
             pass
 
 
@@ -218,7 +218,7 @@ def list_checkpoints(include_completed: bool = False) -> list[dict]:
             if not include_completed and data.get("status") == "completed":
                 continue
             checkpoints.append(data)
-        except:
+        except Exception:
             pass
     return checkpoints
 
@@ -229,7 +229,7 @@ def get_checkpoint(checkpoint_id: str) -> Optional[dict]:
     if cp_file.exists():
         try:
             return json.loads(cp_file.read_text())
-        except:
+        except Exception:
             pass
     return None
 
@@ -257,7 +257,7 @@ def _update_snapshot(task: str, ts: str):
             content
         )
         _atomic_write(SNAPSHOT_FILE, content)
-    except:
+    except Exception:
         pass
 
 

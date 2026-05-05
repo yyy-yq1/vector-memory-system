@@ -172,7 +172,7 @@ def hybrid_search(query: str, n_results: int = 5) -> list[dict]:
                         'text': clean_text[:500],
                         'type': md_file.parent.name if md_file.parent != MEMORY_DIR else 'misc'
                     })
-            except:
+            except Exception:
                 continue
         if docs:
             bm25_results = bm25_search(query, docs, top_k=n_results * 2)

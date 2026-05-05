@@ -528,7 +528,7 @@ if __name__ == '__main__':
             store = get_store()
             vc = store.count()
             print(f"\n📊 L4 向量总数: {vc}")
-        except:
+        except Exception:
             pass
 
         synced = _load_synced()

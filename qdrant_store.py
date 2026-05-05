@@ -23,7 +23,7 @@ def _get_client() -> httpx.Client:
     global _cached_client
     if _cached_client is None:
         _cached_client = httpx.Client(
-            timeout=60.0,
+            from memory_consts import QDRANT_TIMEOUT; timeout=QDRANT_TIMEOUT,
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
         )
     return _cached_client
@@ -53,7 +53,7 @@ def init_collection():
             "hnsw_config": {
                 "m": 16,
                 "ef_construct": 200,
-                "full_scan_threshold": 500,
+                "full_scan_threshold": 500  # 已在consts.QDRANT_FULL_SCAN_THRESHOLD,
             },
             "optimizer_config": {
                 "indexing_threshold": 100,

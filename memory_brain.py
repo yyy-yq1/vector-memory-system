@@ -175,7 +175,7 @@ def _load_capsules() -> dict:
         try:
             with open(CAPSULE_FILE) as f:
                 return json.load(f)
-        except:
+        except Exception:
             return {'capsules': [], 'successions': []}
     return {'capsules': [], 'successions': []}
 
