@@ -53,13 +53,21 @@ def score_confidence(task: str) -> float:
     score = 1.0
 
     # Risk signals
-    # 极高危信号（一次性扣到无法挽回，必须单独检测）
-    catastrophic_signals = [
-        "rm -rf /", "rm -rf /*", "rm -rf /root", "rm -rf ~",
-        "dd if=", "mkfs.", "wipe -l", "shred -f",
+    # 极高危信号（必须用正则精确匹配路径边界，避免 /tmp 被误判为 /）
+    # rm -rf / → 必须以 / 结尾或后面是空格（非 /tmp /usr 等路径）
+    # rm -rf /root → 必须是 /root（不能被 /rootfs 等匹配）
+    # rm -rf ~ → ~ 在末尾或空格后（避免误匹配 ~/path）
+    # rm -rf /* → 根目录通配符
+    catastrophic_patterns = [
+        r"rm\s+-rf\s+/\s",   r"rm\s+-rf\s+/$",     # rm -rf /  后面是空格或行尾
+        r"rm\s+-rf\s+/root\s", r"rm\s+-rf\s+/root$", r"rm\s+-rf\s+/root/",  # rm -rf /root
+        r"rm\s+-rf\s+~\s",   r"rm\s+-rf\s+~$", r"rm\s+-rf\s+~/\s", r"rm\s+-rf\s+~/$", # rm -rf ~ 和 rm -rf ~/（home目录，不含 ~/project）
+        r"rm\s+-rf\s+/\*",  # rm -rf /* （根目录通配）
+        r"dd\s+if=", r"mkfs\.", r"wipe\s+-l", r"shred\s+-f",
     ]
-    for sig in catastrophic_signals:
-        if sig in task:
+    task_lower = task.lower()
+    for pat in catastrophic_patterns:
+        if re.search(pat, task_lower):
             return 0.0  # 最高危，直接拒绝
 
     irreversible_signals = [

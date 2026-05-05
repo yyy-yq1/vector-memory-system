@@ -199,7 +199,7 @@ def run_daily(quiet: bool = False) -> bool:
 用简洁的列表格式输出（3-5条）。"""
             try:
                 import httpx
-                config = json.loads(open(str(Path.home() / '.mmx/config.json')).read())
+                with open(Path.home() / '.mmx/config.json') as f: config = json.loads(f.read())
                 api_key = config.get('api_key', os.environ.get('MINIMAX_API_KEY',''))
                 if api_key:
                     r = httpx.post(
