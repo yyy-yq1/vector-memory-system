@@ -119,8 +119,12 @@ def rrf_merge(ranked_lists: list[list[dict]], top_k: int = 10) -> list[dict]:
     # 排序
     sorted_items = sorted(scores.items(), key=lambda x: -x[1])
     results = []
+    seen_ids = set()  # 防止同一 ID 在多路结果中重复添加
     for rank, (item_id, rrf_score) in enumerate(sorted_items[:top_k], start=1):
-        # 找到原始 item
+        if item_id in seen_ids:
+            continue
+        seen_ids.add(item_id)
+        # 找到原始 item（多路中取排在最前面那个）
         for rl in ranked_lists:
             for item in rl:
                 if item.get('id') == item_id:
