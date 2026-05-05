@@ -11,7 +11,7 @@ from pathlib import Path
 from functools import lru_cache
 
 WORKSPACE = Path.home() / '.openclaw/workspace'
-SKILL_DIR = WORKSPACE / 'skills' / 'vector-memory-self-evolution'
+SKILL_DIR = WORKSPACE / 'skills' / 'skills' / 'vector-memory-self-evolution'
 
 try:
     from memory_config import config as _runtime_config
