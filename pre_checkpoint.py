@@ -23,6 +23,7 @@ import hashlib
 import datetime
 from pathlib import Path
 from typing import Optional
+import json
 
 WORKSPACE = Path.home() / '.openclaw/workspace'
 MEMORY_DIR = WORKSPACE / 'memory'
