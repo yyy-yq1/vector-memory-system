@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LLM 智能记忆提取器 v1.0
+LLM 智能记忆提取器 v1.1
 使用 MiniMax API 从原始文本中提取结构化记忆
 
 调用 MiniMax Chat API，传入提取 prompt，返回 JSON 格式的记忆列表
@@ -14,6 +14,7 @@ import sys
 import json
 import datetime
 import hashlib
+import time
 import httpx
 from pathlib import Path
 from typing import Optional
@@ -27,9 +28,16 @@ from memory_store import get_store, _load_vectorize_state, _save_vectorize_state
 # MiniMax API 调用
 # ─────────────────────────────────────────────────────────────
 
+# MiniMax API 错误码（常见可重试错误）
+RETRYABLE_CODES = {2011301, 2011302, 2011303, 500, 502, 503, 504}
+MAX_RETRIES = 3
+BASE_DELAY = 2.0  # 秒
+
+
 def _load_api_key() -> str:
     """获取 MiniMax API key（mmx CLI 配置优先）"""
     import os, json
+
     # 优先从 mmx CLI 配置读取
     mmx_cfg = Path.home() / '.mmx' / 'config.json'
     if mmx_cfg.exists():
@@ -40,6 +48,7 @@ def _load_api_key() -> str:
                 return key
         except Exception:
             pass
+
     # 环境变量
     return os.environ.get('MINIMAX_API_KEY', '')
 
@@ -72,80 +81,136 @@ EXTRACTION_PROMPT = (
 )
 
 
-
-def extract_with_llm(text: str, model: str = "MiniMax-M2.7") -> list[dict]:
+def extract_with_llm(
+    text: str,
+    model: str = "MiniMax-M2.7-highspeed",
+    max_retries: int = MAX_RETRIES,
+) -> list[dict]:
     """
     使用 MiniMax LLM 从文本中提取结构化记忆
     返回 [{type, title, content, importance}, ...]
+
+    特性：
+    - 自动重试（指数退避），处理速率限制和瞬时错误
+    - 显式 httpx.Timeout 配置（connect + read 分开）
+    - 检查 base_resp.status_code，区分 API 错误和业务错误
+    - 使用 MiniMax-M2.7-highspeed（100 TPS，比 M2.7 更快）
     """
     api_key = _load_api_key()
     if not api_key:
+        print("⚠️  未找到 MiniMax API Key")
         return []
 
     prompt = EXTRACTION_PROMPT.format(text=text[:4000])  # 限制输入长度
 
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            resp = client.post(
-                "https://api.minimaxi.com/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": "你是一个精确的记忆提取助手。只输出 JSON，不输出其他内容。"},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "temperature": 0.1,  # 低温度，确保稳定输出
-                    "max_tokens": 2048,
-                }
-            )
+    for attempt in range(max_retries):
+        try:
+            # 显式 Timeout 对象：连接 10s，读取 120s（避免大响应被截断）
+            with httpx.Client(timeout=httpx.Timeout(10.0, read=120.0)) as client:
+                resp = client.post(
+                    "https://api.minimaxi.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": "你是一个精确的记忆提取助手。只输出 JSON，不输出其他内容。",
+                            },
+                            {"role": "user", "content": prompt},
+                        ],
+                        "temperature": 0.1,  # 低温度，确保稳定输出
+                        "max_tokens": 2048,
+                    },
+                )
+
+            # 检查 HTTP 状态码
+            if resp.status_code == 429:
+                wait = BASE_DELAY * (2 ** attempt)
+                print(f"⚠️  API 速率超限，{wait:.0f}s 后重试（第 {attempt+1}/{max_retries} 次）...")
+                time.sleep(wait)
+                continue
+
             resp.raise_for_status()
             result = resp.json()
 
-        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-        if not content:
+            # 检查 MiniMax 业务状态码
+            base_resp = result.get("base_resp", {})
+            status_code = base_resp.get("status_code", 0)
+            if status_code != 0:
+                status_msg = base_resp.get("status_msg", "未知错误")
+                # 速率限制或服务端错误 → 重试
+                if status_code in RETRYABLE_CODES or "rate" in status_msg.lower():
+                    wait = BASE_DELAY * (2 ** attempt)
+                    print(f"⚠️  API 错误 {status_code} ({status_msg})，{wait:.0f}s 后重试...")
+                    time.sleep(wait)
+                    continue
+                # 其他错误直接返回空
+                print(f"⚠️  API 错误 {status_code}: {status_msg}")
+                return []
+
+            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if not content:
+                return []
+
+            # 提取 JSON（可能在 markdown 代码块或解释性文字中）
+            content = content.strip()
+
+            import re
+
+            if '```json' in content:
+                m = re.search(r'```json\s*(.+?)```', content, re.DOTALL)
+                if m:
+                    content = m.group(1).strip()
+            elif '```' in content:
+                m = re.search(r'```\s*(.+?)```', content, re.DOTALL)
+                if m:
+                    content = m.group(1).strip()
+            else:
+                # 去掉解释性文字，只保留 JSON 数组部分
+                m = re.search(r'(\[[\s\S]+\])', content)
+                if m:
+                    content = m.group(1).strip()
+
+            memories = json.loads(content)
+            if isinstance(memories, dict):
+                memories = [memories]
+            return memories
+
+        except httpx.TimeoutException as e:
+            wait = BASE_DELAY * (2 ** attempt)
+            print(f"⚠️  LLM 超时（{e}），{wait:.0f}s 后重试（第 {attempt+1}/{max_retries} 次）...")
+            time.sleep(wait)
+            continue
+
+        except httpx.HTTPStatusError as e:
+            # 4xx/5xx HTTP 错误
+            wait = BASE_DELAY * (2 ** attempt)
+            print(f"⚠️  HTTP {e.response.status_code}，{wait:.0f}s 后重试（第 {attempt+1}/{max_retries} 次）...")
+            time.sleep(wait)
+            continue
+
+        except Exception as e:
+            # 其他错误（JSON 解析失败、网络断开等）→ 不重试，直接返回空
+            print(f"⚠️  LLM 提取失败: {e}")
             return []
 
-        # 提取 JSON（可能在 markdown 代码块或解释性文字中）
-        content = content.strip()
-
-        # 去掉 markdown 代码块
-        if '```json' in content:
-            import re
-            m = re.search(r'```json\s*(.+?)```', content, re.DOTALL)
-            if m:
-                content = m.group(1).strip()
-        elif '```' in content:
-            import re
-            m = re.search(r'```\s*(.+?)```', content, re.DOTALL)
-            if m:
-                content = m.group(1).strip()
-        else:
-            # 去掉解释性文字，只保留 JSON 数组部分
-            import re
-            m = re.search(r'(\[[\s\S]+\])', content)
-            if m:
-                content = m.group(1).strip()
-
-        memories = json.loads(content)
-        if isinstance(memories, dict):
-            memories = [memories]
-        return memories
-
-    except Exception as e:
-        print(f"⚠️  LLM 提取失败: {e}")
-        return []
+    # 所有重试次数耗尽
+    print(f"⚠️  LLM 提取失败：已重试 {max_retries} 次")
+    return []
 
 
 # ─────────────────────────────────────────────────────────────
 # 存储
 # ─────────────────────────────────────────────────────────────
 
+
 def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode('utf-8')).hexdigest()[:32]
+
 
 def _save_hash(text: str):
     h = _content_hash(text)
@@ -156,11 +221,15 @@ def _save_hash(text: str):
     state["last_sync"] = datetime.datetime.now().isoformat()
     _save_vectorize_state(state)
 
+
 def _load_synced() -> set:
     state = _load_vectorize_state()
     return set(state.get("synced_hashes", []))
 
-def _write_entry(typ: str, title: str, content: str, source: str = '', importance: float = 0.5) -> bool:
+
+def _write_entry(
+    typ: str, title: str, content: str, source: str = '', importance: float = 0.5
+) -> bool:
     """写入 L2 文件 + L4 Qdrant，返回是否新写入"""
     today = datetime.datetime.now().strftime('%Y-%m-%d')
     timestamp = datetime.datetime.now().isoformat()
@@ -190,10 +259,12 @@ importance: {importance}
 
     try:
         store = get_store()
-        store.add(content[:MAX_CONTENT_LEN], typ, source=source, metadata={
-            "title": title,
-            "importance": importance,
-        })
+        store.add(
+            content[:MAX_CONTENT_LEN],
+            typ,
+            source=source,
+            metadata={"title": title, "importance": importance},
+        )
     except Exception as e:
         print(f"    ⚠️  Qdrant: {e}")
 
@@ -242,6 +313,7 @@ def capture_extracted(memories: list[dict], source: str = '') -> dict:
 # ─────────────────────────────────────────────────────────────
 # 主提取流程
 # ─────────────────────────────────────────────────────────────
+
 
 def llm_extract_text(text: str, source: str = '') -> dict:
     """
@@ -294,6 +366,7 @@ def llm_extract_session(session_id: str, messages: list[dict], force: bool = Fal
 
 if __name__ == '__main__':
     import argparse
+
     parser = argparse.ArgumentParser(description='LLM 智能记忆提取')
     parser.add_argument('--file', type=str, help='从文件提取')
     parser.add_argument('--text', type=str, help='直接传入文本')
@@ -311,6 +384,7 @@ if __name__ == '__main__':
     elif args.session_id:
         # 从 session_transcript_extractor 读取
         from session_transcript_extractor import _extract_messages_from_transcript
+
         sessions_dir = Path('/root/.openclaw/agents/main/sessions')
         for tf in sessions_dir.glob('*.jsonl'):
             if args.session_id in tf.stem:
