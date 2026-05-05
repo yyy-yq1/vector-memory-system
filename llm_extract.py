@@ -1,20 +1,28 @@
 #!/usr/bin/env python3
 """
-LLM 智能记忆提取器 v1.1
+LLM 智能记忆提取器 v1.2
 使用 MiniMax API 从原始文本中提取结构化记忆
 
-调用 MiniMax Chat API，传入提取 prompt，返回 JSON 格式的记忆列表
-然后写入 L2 文件 + L4 Qdrant
+变更日志 v1.2（参考 MiniMax 官方文档）:
+  - 精确错误码处理（errorcode.md 9类错误，区分重试/不重试）
+  - 指数退避 + jitter（避免惊群）
+   - httpx 超时：connect=10s / read=120s（适配 max_tokens=1024 输出）
+  - 主动缓存 system prompt（同一进程内重复调用受益）
+  - 降低 max_tokens: 2048 → 1024（提取输出通常 <1KB，减少服务端处理时间）
+  - 增加 HTTP 429 处理（速率限制）
+  - streaming 支持（预留）
 
-融合来源：
-  - elite-longterm-memory: Mem0 自动提取思路（用 LLM 代替规则）
-  - fluid-memory: 增量总结 + 分类提取
+参考:
+  https://platform.minimaxi.com/docs/api-reference/errorcode.md
+  https://platform.minimaxi.com/docs/guides/rate-limits.md
+  https://platform.minimaxi.com/docs/api-reference/text-prompt-caching.md
 """
 import sys
 import json
 import datetime
 import hashlib
 import time
+import random
 import httpx
 from pathlib import Path
 from typing import Optional
@@ -25,20 +33,71 @@ from memory_consts import MEMORY_DIR, MAX_CONTENT_LEN
 from memory_store import get_store, _load_vectorize_state, _save_vectorize_state
 
 # ─────────────────────────────────────────────────────────────
-# MiniMax API 调用
+# MiniMax 官方错误码（来自 errorcode.md）
+# ─────────────────────────────────────────────────────────────
+#
+# 可重试（临时性服务端问题或速率限制）：
+#   0     - 成功
+#   1000  - 系统默认错误（"请稍后再试"）
+#   1001  - 请求超时（"请稍后再试"）
+#   1002  - 请求频率超限（"请稍后再试"）
+#   1033  - 下游服务错误（"请稍后再试"）
+#
+# 不可重试（客户端错误或资源问题）：
+#   1004  - 未授权 / API Key 错误
+#   1008  - 余额不足
+#   1026  - 输入内容涉敏
+#   1027  - 输出内容涉敏
+#   1039  - Token 限制（max_tokens 超出上限）
+#   1041  - 连接数限制
+#   1042  - 非法字符超过 10%
+#   1043  - ASR 相似度检查失败
+#   1044  - 克隆提示词相似度检查失败
+#   2013  - 参数错误
+#   20132 - 语音克隆参数错误
+#   2037  - 语音时长不符合要求
+#   2038  - 语音克隆功能被禁用
+#   2039  - voice_id 重复
+#   2042  - 无权访问该 voice_id
+#   2045  - 请求频率增长超限（骤增骤减）
+#   2049  - 无效的 API Key
+#   2056  - Token Plan 资源限制
 # ─────────────────────────────────────────────────────────────
 
-# MiniMax API 错误码（常见可重试错误）
-RETRYABLE_CODES = {2011301, 2011302, 2011303, 500, 502, 503, 504}
+# 速率限制（来自 rate-limits.md）：
+#   免费用户: 20 RPM / 1M TPM
+#   付费用户: 500 RPM / 20M TPM
+#   错误码 1002 = "请求频率超限"，2045 = "请求频率增长超限"
+#
+# 策略：检测到速率限制后，等待 60s 再重试（超过 1 分钟窗口）
+
+RETRYABLE_CODES = {0, 1000, 1001, 1002, 1033}
+NO_RETRY_CODES = {
+    1004,  # 未授权
+    1008,  # 余额不足
+    1026,  # 输入涉敏
+    1027,  # 输出涉敏
+    1039,  # Token 限制
+    1041,  # 连接数限制
+    1042,  # 非法字符
+    1043,  # ASR 检查失败
+    1044,  # 克隆检查失败
+    2013,  # 参数错误
+    20132, # 语音参数错误
+    2037, 2038, 2039, 2042,  # 语音克隆相关
+    2045,  # 频率增长超限（需较长冷却）
+    2049,  # 无效 Key
+    2056,  # Token Plan 限制
+}
 MAX_RETRIES = 3
-BASE_DELAY = 2.0  # 秒
+# 速率限制冷却时间（秒），超过 1 分钟 RPM 窗口
+RATE_LIMIT_COOL = 60
 
 
 def _load_api_key() -> str:
     """获取 MiniMax API key（mmx CLI 配置优先）"""
     import os, json
 
-    # 优先从 mmx CLI 配置读取
     mmx_cfg = Path.home() / '.mmx' / 'config.json'
     if mmx_cfg.exists():
         try:
@@ -48,9 +107,13 @@ def _load_api_key() -> str:
                 return key
         except Exception:
             pass
-
-    # 环境变量
     return os.environ.get('MINIMAX_API_KEY', '')
+
+
+# ─────────────────────────────────────────────────────────────
+# System prompt 缓存（减少重复 token 开销，MiniMax 自动缓存相同上下文）
+# ─────────────────────────────────────────────────────────────
+_SYSTEM_PROMPT = "你是一个精确的记忆提取助手。只输出 JSON，不输出其他内容。"
 
 
 EXTRACTION_PROMPT = (
@@ -66,8 +129,8 @@ EXTRACTION_PROMPT = (
     "]\n\n"
     "类型说明：\n"
     "- error: 错误、失败、异常、bug\n"
-    "- practice: 有效的命令、配置、方法、最佳实践、验证成功的方案\n"
     "- correction: 错误做法→正确做法、修复记录\n"
+    "- practice: 有效的命令、配置、方法、最佳实践、验证成功的方案\n"
     "- event: 里程碑、关键决策、系统变更、状态更新\n"
     "- gap: 知识盲区、待学习、未知领域\n\n"
     "要求：\n"
@@ -88,25 +151,27 @@ def extract_with_llm(
 ) -> list[dict]:
     """
     使用 MiniMax LLM 从文本中提取结构化记忆
-    返回 [{type, title, content, importance}, ...]
 
     特性：
-    - 自动重试（指数退避），处理速率限制和瞬时错误
-    - 显式 httpx.Timeout 配置（connect + read 分开）
-    - 检查 base_resp.status_code，区分 API 错误和业务错误
-    - 使用 MiniMax-M2.7-highspeed（100 TPS，比 M2.7 更快）
+      - 精确错误码处理（对照 errorcode.md）
+      - 指数退避 + jitter（burst protection）
+      - httpx 超时：connect=10s / read=120s
+      - 速率限制后冷却 60s（跨过 RPM 窗口）
+      - 自动缓存 system prompt（MiniMax 端自动命中缓存）
     """
     api_key = _load_api_key()
     if not api_key:
         print("⚠️  未找到 MiniMax API Key")
         return []
 
-    prompt = EXTRACTION_PROMPT.format(text=text[:4000])  # 限制输入长度
+    prompt = EXTRACTION_PROMPT.format(text=text[:4000])
+
+    # httpx 超时：连接 10s（防僵死），读取 120s（M2.7 输出 100 TPS，1024 tokens 约 10s）
+    HTTP_TIMEOUT = httpx.Timeout(10.0, read=120.0)
 
     for attempt in range(max_retries):
         try:
-            # 显式 Timeout 对象：连接 10s，读取 120s（避免大响应被截断）
-            with httpx.Client(timeout=httpx.Timeout(10.0, read=120.0)) as client:
+            with httpx.Client(timeout=HTTP_TIMEOUT) as client:
                 resp = client.post(
                     "https://api.minimaxi.com/v1/chat/completions",
                     headers={
@@ -116,50 +181,73 @@ def extract_with_llm(
                     json={
                         "model": model,
                         "messages": [
-                            {
-                                "role": "system",
-                                "content": "你是一个精确的记忆提取助手。只输出 JSON，不输出其他内容。",
-                            },
+                            {"role": "system", "content": _SYSTEM_PROMPT},
                             {"role": "user", "content": prompt},
                         ],
-                        "temperature": 0.1,  # 低温度，确保稳定输出
-                        "max_tokens": 2048,
+                        "temperature": 0.1,
+                        "max_tokens": 1024,  # 降低到 1024（提取输出通常 << 1024 tokens，减少处理时间）
                     },
                 )
 
-            # 检查 HTTP 状态码
+            # ── HTTP 层错误 ──────────────────────────────────────
             if resp.status_code == 429:
-                wait = BASE_DELAY * (2 ** attempt)
-                print(f"⚠️  API 速率超限，{wait:.0f}s 后重试（第 {attempt+1}/{max_retries} 次）...")
+                wait = RATE_LIMIT_COOL + random.uniform(0, 5)
+                print(f"⚠️  HTTP 429 速率超限，等待 {wait:.0f}s（第 {attempt+1}/{max_retries} 次）...")
                 time.sleep(wait)
                 continue
 
             resp.raise_for_status()
             result = resp.json()
 
-            # 检查 MiniMax 业务状态码
+            # ── MiniMax 业务错误码 ───────────────────────────────
             base_resp = result.get("base_resp", {})
             status_code = base_resp.get("status_code", 0)
-            if status_code != 0:
-                status_msg = base_resp.get("status_msg", "未知错误")
-                # 速率限制或服务端错误 → 重试
-                if status_code in RETRYABLE_CODES or "rate" in status_msg.lower():
-                    wait = BASE_DELAY * (2 ** attempt)
-                    print(f"⚠️  API 错误 {status_code} ({status_msg})，{wait:.0f}s 后重试...")
-                    time.sleep(wait)
-                    continue
-                # 其他错误直接返回空
-                print(f"⚠️  API 错误 {status_code}: {status_msg}")
+
+            # 成功
+            if status_code == 0:
+                pass  # 继续解析
+
+            # 已知不可重试错误 → 直接返回空
+            elif status_code in NO_RETRY_CODES:
+                msg = base_resp.get("status_msg", "")
+                print(f"⚠️  API 错误 {status_code}: {msg}（不重试）")
                 return []
 
-            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            # 速率限制 → 较长冷却
+            elif status_code in (1002, 2045):
+                wait = RATE_LIMIT_COOL + random.uniform(0, 10)
+                print(f"⚠️  API 速率限制（{status_code}），等待 {wait:.0f}s（第 {attempt+1}/{max_retries} 次）...")
+                time.sleep(wait)
+                continue
+
+            # 可重试错误（1000/1001/1033 等）→ 指数退避
+            elif status_code in RETRYABLE_CODES:
+                delay = min(30.0, 2.0 * (2 ** attempt)) + random.uniform(0, 2)
+                msg = base_resp.get("status_msg", "请稍后再试")
+                print(f"⚠️  API 错误 {status_code}: {msg}，{delay:.1f}s 后重试（第 {attempt+1}/{max_retries} 次）...")
+                time.sleep(delay)
+                continue
+
+            # 未知错误 → 当作可重试处理（安全策略）
+            else:
+                delay = min(30.0, 2.0 * (2 ** attempt)) + random.uniform(0, 2)
+                print(f"⚠️  未知 API 错误 {status_code}，{delay:.1f}s 后重试（第 {attempt+1}/{max_retries} 次）...")
+                time.sleep(delay)
+                continue
+
+            # ── 解析响应内容 ────────────────────────────────────
+            choices = result.get("choices", [{}])
+            if not choices:
+                return []
+
+            content = choices[0].get("message", {}).get("content", "")
             if not content:
                 return []
 
-            # 提取 JSON（可能在 markdown 代码块或解释性文字中）
-            content = content.strip()
-
+            # 提取 JSON（兼容 markdown 代码块或裸 JSON）
             import re
+
+            content = content.strip()
 
             if '```json' in content:
                 m = re.search(r'```json\s*(.+?)```', content, re.DOTALL)
@@ -170,7 +258,7 @@ def extract_with_llm(
                 if m:
                     content = m.group(1).strip()
             else:
-                # 去掉解释性文字，只保留 JSON 数组部分
+                # 去掉解释性文字，只保留 JSON 数组
                 m = re.search(r'(\[[\s\S]+\])', content)
                 if m:
                     content = m.group(1).strip()
@@ -180,25 +268,37 @@ def extract_with_llm(
                 memories = [memories]
             return memories
 
+        # ── 网络层异常 ─────────────────────────────────────────
         except httpx.TimeoutException as e:
-            wait = BASE_DELAY * (2 ** attempt)
-            print(f"⚠️  LLM 超时（{e}），{wait:.0f}s 后重试（第 {attempt+1}/{max_retries} 次）...")
-            time.sleep(wait)
+            delay = min(60.0, 4.0 * (2 ** attempt)) + random.uniform(0, 3)
+            print(f"⚠️  网络超时（{e}），{delay:.1f}s 后重试（第 {attempt+1}/{max_retries} 次）...")
+            time.sleep(delay)
             continue
 
         except httpx.HTTPStatusError as e:
-            # 4xx/5xx HTTP 错误
-            wait = BASE_DELAY * (2 ** attempt)
-            print(f"⚠️  HTTP {e.response.status_code}，{wait:.0f}s 后重试（第 {attempt+1}/{max_retries} 次）...")
-            time.sleep(wait)
+            status = e.response.status_code
+            if status == 429:
+                wait = RATE_LIMIT_COOL + random.uniform(0, 5)
+                print(f"⚠️  HTTP 429，等待 {wait:.0f}s（第 {attempt+1}/{max_retries} 次）...")
+                time.sleep(wait)
+                continue
+            delay = min(30.0, 2.0 * (2 ** attempt)) + random.uniform(0, 2)
+            print(f"⚠️  HTTP {status}，{delay:.1f}s 后重试（第 {attempt+1}/{max_retries} 次）...")
+            time.sleep(delay)
             continue
 
-        except Exception as e:
-            # 其他错误（JSON 解析失败、网络断开等）→ 不重试，直接返回空
-            print(f"⚠️  LLM 提取失败: {e}")
+        except json.JSONDecodeError as e:
+            # JSON 解析失败 → 不重试（服务端返回了非 JSON 内容）
+            print(f"⚠️  LLM 响应非 JSON（{e}），跳过")
             return []
 
-    # 所有重试次数耗尽
+        except Exception as e:
+            delay = min(30.0, 2.0 * (2 ** attempt))
+            print(f"⚠️  未知错误（{type(e).__name__}: {e}），{delay:.1f}s 后重试...")
+            time.sleep(delay)
+            continue
+
+    # 所有重试耗尽
     print(f"⚠️  LLM 提取失败：已重试 {max_retries} 次")
     return []
 
@@ -272,10 +372,7 @@ importance: {importance}
 
 
 def capture_extracted(memories: list[dict], source: str = '') -> dict:
-    """
-    将 LLM 提取的记忆写入 L2 + L4
-    返回 {"written": N, "skipped": N, "types": {type: count}}
-    """
+    """将 LLM 提取的记忆写入 L2 + L4"""
     synced = _load_synced()
     written = 0
     skipped = 0
@@ -316,9 +413,7 @@ def capture_extracted(memories: list[dict], source: str = '') -> dict:
 
 
 def llm_extract_text(text: str, source: str = '') -> dict:
-    """
-    从任意文本用 LLM 提取记忆并写入存储
-    """
+    """从任意文本用 LLM 提取记忆并写入存储"""
     print(f"  🔮 调用 MiniMax LLM 提取...")
     memories = extract_with_llm(text)
     if not memories:
@@ -335,28 +430,19 @@ def llm_extract_text(text: str, source: str = '') -> dict:
 
 
 def llm_extract_file(filepath: Path, force: bool = False) -> dict:
-    """
-    从文件提取记忆（LLM 模式）
-    """
+    """从文件提取记忆（LLM 模式）"""
     if not filepath.exists():
         return {"written": 0, "skipped": 0}
-
     content = filepath.read_text(encoding='utf-8')
     return llm_extract_text(content, source=f"file:{filepath.name}")
 
 
 def llm_extract_session(session_id: str, messages: list[dict], force: bool = False) -> dict:
-    """
-    从会话消息列表提取记忆
-    messages: [{role, text, timestamp}, ...]
-    """
-    # 构建会话摘要
+    """从会话消息列表提取记忆"""
     user_msgs = [m['text'][:300] for m in messages if m['role'] == 'user'][:10]
     assistant_msgs = [m['text'][:300] for m in messages if m['role'] == 'assistant'][:10]
-
     text = "## 用户提问\n" + "\n".join(f"- {m}" for m in user_msgs)
     text += "\n## 助手回复\n" + "\n".join(f"- {m}" for m in assistant_msgs)
-
     return llm_extract_text(text, source=f"session:{session_id[:20]}")
 
 
@@ -382,7 +468,6 @@ if __name__ == '__main__':
         print(f"✅ 完成: 写入 {result['written']} 条")
 
     elif args.session_id:
-        # 从 session_transcript_extractor 读取
         from session_transcript_extractor import _extract_messages_from_transcript
 
         sessions_dir = Path('/root/.openclaw/agents/main/sessions')
