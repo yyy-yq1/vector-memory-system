@@ -19,7 +19,7 @@ from pathlib import Path
 # === 路径配置 ===
 WORKSPACE = Path.home() / ".openclaw/workspace"
 MEMORY_DIR = WORKSPACE / "memory"
-SKILL_DIR = WORKSPACE / "skills/vector-memory-self-evolution"
+SKILL_DIR = WORKSPACE / "skills" / "skills" / "vector-memory-self-evolution"
 COUNTER_SCRIPT = SKILL_DIR / "conversation_counter.py"
 SKILL_CHECKER = SKILL_DIR / "skill_health_checker.py"
 REVIEW_THRESHOLD = 20

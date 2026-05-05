@@ -97,7 +97,7 @@ class ContextBuilder:
         """添加相关记忆（向量搜索）"""
         try:
             import sys
-            sys.path.insert(0, str(WORKSPACE / 'skills' / 'vector-memory-self-evolution'))
+            sys.path.insert(0, str(WORKSPACE / 'skills' / 'skills' / 'vector-memory-self-evolution'))
             from memory_api import search
             results = search(query, n_results=n_results)
             if results:
@@ -114,7 +114,7 @@ class ContextBuilder:
     def add_recent_decisions(self, limit: int = 3):
         """添加最近决策"""
         try:
-            sys_path = str(WORKSPACE / 'skills' / 'vector-memory-self-evolution')
+            sys_path = str(WORKSPACE / 'skills' / 'skills' / 'vector-memory-self-evolution')
             import sys
             sys.path.insert(0, sys_path)
             from session_store import get_store

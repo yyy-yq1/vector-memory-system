@@ -61,6 +61,39 @@ def _read_file(path: Path) -> str:
         pass
     return ""
 
+
+def _atomic_append(file_path: Path, block: str):
+    """原子追加：带文件锁的读-改-写（防止并发丢数据）"""
+    import fcntl
+    import shutil
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(file_path, 'a+', encoding='utf-8') as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            f.seek(0)
+            existing = f.read()
+            f.seek(0)
+            f.truncate()
+            f.write(existing + block)
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+def _locked_modify(file_path: Path, modifier: callable):
+    """带文件锁的通用读-修改-写（防止并发修改同一文件）"""
+    import fcntl
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(file_path, 'r+', encoding='utf-8') as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            content = f.read()
+            modified = modifier(content)
+            f.seek(0)
+            f.truncate()
+            f.write(modified)
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
 # ─────────────────────────────────────────────────────────────
 # Checkpoint 管理
 # ─────────────────────────────────────────────────────────────
@@ -109,9 +142,8 @@ def create_checkpoint(
 
 """
 
-    # 追加到缓冲区
-    existing = _read_file(BUFFER_FILE)
-    _atomic_write(BUFFER_FILE, existing + block)
+    # 追加到缓冲区（带文件锁，防止并发丢数据）
+    _atomic_append(BUFFER_FILE, block)
 
     # 更新 SNAPSHOT（标记进行中任务）
     _update_snapshot(task, ts)
@@ -146,26 +178,24 @@ def complete_checkpoint(checkpoint_id: str, result: str = "完成") -> bool:
     ts = _cst_now()
 
     # 更新缓冲区
-    content = _read_file(BUFFER_FILE)
+    # 更新缓冲区（带文件锁，防止并发修改）
     safe_id = re.escape(checkpoint_id)
-
-    # 替换状态标记
     pattern_state = re.compile(
         rf'(<!-- PRE-CHECKPOINT {safe_id}[\s\S]*?状态 \| )⏳ 进行中',
         re.MULTILINE
     )
-    content = pattern_state.sub(r'\1✅ 完成', content)
-
-    # 追加完成记录
     pattern_progress = re.compile(
         rf'(<!-- PRE-CHECKPOINT {safe_id}[\s\S]*?(\- \[.*?\].*?\n))',
         re.MULTILINE
     )
     def add_complete(m):
         return m.group(1) + f"- [{ts}] 任务完成: {result}\n"
-    content = pattern_progress.sub(add_complete, content)
 
-    _atomic_write(BUFFER_FILE, content)
+    def modifier(content):
+        content = pattern_state.sub(r'\1✅ 完成', content)
+        return pattern_progress.sub(add_complete, content)
+
+    _locked_modify(BUFFER_FILE, modifier)
 
     # 更新独立 checkpoint 文件
     cp_file = CHECKPOINT_DIR / f"checkpoint_{checkpoint_id}.json"
@@ -187,7 +217,7 @@ def add_progress(checkpoint_id: str, note: str):
     """追加进度记录"""
     ts = _cst_now()
 
-    content = _read_file(BUFFER_FILE)
+    # 更新缓冲区（带文件锁，防止并发修改）
     safe_id = re.escape(checkpoint_id)
     pattern = re.compile(
         rf'(<!-- PRE-CHECKPOINT {safe_id}[\s\S]*?(\- \[.*?\].*?\n))',
@@ -195,8 +225,11 @@ def add_progress(checkpoint_id: str, note: str):
     )
     def add_note(m):
         return m.group(1) + f"- [{ts}] {note}\n"
-    content = pattern.sub(add_note, content)
-    _atomic_write(BUFFER_FILE, content)
+
+    def modifier(content):
+        return pattern.sub(add_note, content)
+
+    _locked_modify(BUFFER_FILE, modifier)
 
     # 同时更新独立文件
     cp_file = CHECKPOINT_DIR / f"checkpoint_{checkpoint_id}.json"

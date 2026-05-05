@@ -65,7 +65,7 @@ LAYER_META = {
 
 WORKSPACE = Path.home() / '.openclaw/workspace'
 MEMORY_DIR = WORKSPACE / 'memory'
-SKILL_DIR = WORKSPACE / 'skills' / 'vector-memory-self-evolution'
+SKILL_DIR = WORKSPACE / 'skills' / 'skills' / 'vector-memory-self-evolution'
 SESSION_STATE_FILE = WORKSPACE / 'SESSION-STATE.md'
 
 
