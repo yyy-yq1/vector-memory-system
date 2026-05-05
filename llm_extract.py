@@ -3,13 +3,13 @@
 LLM 智能记忆提取器 v1.2
 使用 MiniMax API 从原始文本中提取结构化记忆
 
-变更日志 v1.2（参考 MiniMax 官方文档）:
-  - 精确错误码处理（errorcode.md 9类错误，区分重试/不重试）
+变更日志 v1.3（根因：MiniMax M2.7 思考过程消耗输出token，1024不够导致JSON截断）:
+  - max_tokens: 1024 → 3000（2048是最低可行值，3000保留安全余量）
+  - 增加 extra_body: {"reasoning_split": True}（思考分离到 reasoning_details，content 更完整）
+  - httpx 超时：connect=10s / read=120s（适配 max_tokens=3000 输出约30s）
   - 指数退避 + jitter（避免惊群）
-   - httpx 超时：connect=10s / read=120s（适配 max_tokens=1024 输出）
   - 主动缓存 system prompt（同一进程内重复调用受益）
-  - 降低 max_tokens: 2048 → 1024（提取输出通常 <1KB，减少服务端处理时间）
-  - 增加 HTTP 429 处理（速率限制）
+  - HTTP 429 处理（速率限制）
   - streaming 支持（预留）
 
 参考:
@@ -185,7 +185,8 @@ def extract_with_llm(
                             {"role": "user", "content": prompt},
                         ],
                         "temperature": 0.1,
-                        "max_tokens": 1024,  # 降低到 1024（提取输出通常 << 1024 tokens，减少处理时间）
+                        "max_tokens": 3000,  # MiniMax M2.7 思考过程占用大量输出 token；需 >=2048 才能在 3500chars 思考输出后剩余空间给 JSON（实测 1024 会导致 finish_reason=length，JSON 截断无法解析）
+                        "extra_body": {"reasoning_split": True},  # 将思考分离到 reasoning_details，content 输出更完整
                     },
                 )
 
