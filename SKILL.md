@@ -191,3 +191,5 @@ BM25 + Embedding + RRF（Reciprocal Rank Fusion）融合：
 |----|------|
 | httpx | Qdrant REST API + MiniMax API |
 | rank-bm25 | BM25 关键词搜索 |
+
+_Last Updated: 2026-05-05_
