@@ -212,11 +212,10 @@ def _sync_to_session_store(
     try:
         from session_store import get_store
         store = get_store()
-        loop = asyncio.get_event_loop()
 
         if append_decision:
             try:
-                loop.run_until_complete(
+                asyncio.run(
                     store.save_decision(
                         append_decision[:80],
                         append_decision,
@@ -228,7 +227,7 @@ def _sync_to_session_store(
 
         if append_action and store:
             try:
-                loop.run_until_complete(
+                asyncio.run(
                     store.save_task(
                         append_action[:100],
                         "pending",
@@ -241,7 +240,7 @@ def _sync_to_session_store(
 
         if current_task and current_task not in ('[None]', '[Completed]'):
             try:
-                loop.run_until_complete(
+                asyncio.run(
                     store.save_snapshot("L1_state", {
                         "task": current_task,
                         "timestamp": datetime.datetime.now().isoformat(),

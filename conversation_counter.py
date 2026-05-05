@@ -11,6 +11,7 @@ CLI:
 """
 
 import json
+import os
 import sys
 import tempfile
 import shutil
@@ -48,7 +49,6 @@ def _save(data: dict) -> None:
         raise
 
 
-import os
 
 
 def get_status() -> dict:

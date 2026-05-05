@@ -124,7 +124,7 @@ class ContextBuilder:
                 store = get_store()
                 return await store.search_decisions(limit=limit)
 
-            decisions = asyncio.get_event_loop().run_until_complete(_fetch())
+            decisions = asyncio.run(_fetch())
             if decisions:
                 texts = []
                 for d in decisions:
