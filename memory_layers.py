@@ -494,6 +494,24 @@ def l10_query(question: str, layers: list[int] = None) -> dict:
         if tool_hints:
             results_by_layer['L6'] = tool_hints
 
+    # L10: TaskRouter 决策（有意义的任务描述）
+    if len(question) >= 8 and any(k in q_lower for k in
+        ['怎么', '如何', '方法', 'why', 'what', 'which', 'should', '应该', '能否', '要不要']):
+        try:
+            from task_router import route_task
+            routing = route_task(question)
+            if routing and routing.get('confidence', 0) > 0.5:
+                results_by_layer['L10'] = [{
+                    'text': f"路由决策: {routing.get('category','?')} | "
+                            f"拆分: {routing.get('should_split')} | "
+                            f"Agent数: {len(routing.get('agents', []))} | "
+                            f"置信度: {routing.get('confidence', 0):.2f}",
+                    'score': routing.get('confidence', 0),
+                    'routing': routing,
+                }]
+        except Exception:
+            pass
+
     # L7: MEMORY.md
     if 7 in target_layers and MEMORY_MD.exists():
         content = MEMORY_MD.read_text()

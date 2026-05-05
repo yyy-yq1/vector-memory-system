@@ -184,7 +184,72 @@ def update(
     tmp = STATE_FILE.with_suffix('.tmp')
     tmp.write_text(content, encoding='utf-8')
     tmp.rename(STATE_FILE)
+
+    # 同时同步到 SessionStore（L1 ↔ SessionStore 双写）
+    try:
+        import asyncio
+        _sync_to_session_store(
+            current_task=state.get('current_task'),
+            append_decision=append_decision,
+            append_action=append_action,
+        )
+    except Exception:
+        pass  # SessionStore 不可用不影响主流程
+
     return True
+
+
+def _sync_to_session_store(
+    current_task: str = None,
+    append_decision: str = None,
+    append_action: str = None,
+):
+    """
+    将 SESSION-STATE.md 的变更同步到 SessionStore
+    双写保证：SESSION-STATE.md 是 AI 的热内存，
+    SessionStore 是结构化持久化（可被 L10 查询）
+    """
+    try:
+        from session_store import get_store
+        store = get_store()
+        loop = asyncio.get_event_loop()
+
+        if append_decision:
+            try:
+                loop.run_until_complete(
+                    store.save_decision({
+                        "topic": append_decision[:80],
+                        "content": append_decision,
+                        "source": "SESSION-STATE",
+                    })
+                )
+            except Exception:
+                pass
+
+        if append_action and store:
+            try:
+                loop.run_until_complete(
+                    store.save_task({
+                        "title": append_action[:100],
+                        "status": "pending",
+                        "source": "SESSION-STATE",
+                    })
+                )
+            except Exception:
+                pass
+
+        if current_task and current_task not in ('[None]', '[Completed]'):
+            try:
+                loop.run_until_complete(
+                    store.save_snapshot("L1_state", {
+                        "task": current_task,
+                        "timestamp": datetime.datetime.now().isoformat(),
+                    })
+                )
+            except Exception:
+                pass
+    except Exception:
+        pass  # 完全降级，不影响主流程
 
 
 def mark_task_complete(task_desc: str = ""):

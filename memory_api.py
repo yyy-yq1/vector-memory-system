@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 记忆 API - 统一的记忆操作接口
-写入：L2 文件存储 + L4 Qdrant 向量库
-搜索：L4 Qdrant 向量库（语义）+ L2 文件（关键词）
+写入:L2 文件存储 + L4 Qdrant 向量库
+搜索:L4 Qdrant 向量库(语义)+ L2 文件(关键词)
 """
 import json
 import datetime
@@ -14,14 +14,14 @@ from functools import lru_cache
 from memory_consts import WORKSPACE, MEMORY_DIR, MEMORY_ARCHIVE_DIR, MEMORY_TYPES
 
 # ─────────────────────────────────────────────────────────────
-# TTL 文件内容缓存（避免 check_before_execute 重复读磁盘）
+# TTL 文件内容缓存(避免 check_before_execute 重复读磁盘)
 # ─────────────────────────────────────────────────────────────
 _FILE_CACHE = {}
 _CACHE_TS = {}
 _CACHE_TTL = 60  # 秒
 
 def _get_cached_content(path: Path, max_age: int = _CACHE_TTL) -> str | None:
-    """带 TTL 的文件内容缓存，避免重复读取同一文件"""
+    """带 TTL 的文件内容缓存,避免重复读取同一文件"""
     now = time.time()
     p = str(path)
     if p in _FILE_CACHE and now - _CACHE_TS.get(p, 0) < max_age:
@@ -54,10 +54,54 @@ def capture_event(title, content, context=''):
 
 # === 核心功能 ===
 
+def _make_typed_fragment(typ: str, title: str, content: str, context: str = ''):
+    """
+    根据记忆类型创建正确的 typed fragment
+
+    映射规则：
+      error      → LessonFragment（教训）
+      correction → LessonFragment（纠正也是一种教训）
+      practice   → ConclusionFragment（最佳实践=结论）
+      event      → TaskFragment（重要事件=任务）
+      gap        → LessonFragment（知识空白=教训）
+    """
+    try:
+        from memory_fragment import (
+            skill, task, config,
+            conclusion, lesson, MemoryFragment
+        )
+        combined = f"{title}\n{content}"
+
+        if typ == 'event':
+            return task(
+                task_name=title,
+                status='event',
+                note=context,
+                priority=0.9
+            )
+        elif typ == 'practice':
+            return conclusion(
+                text=combined,
+                source=context,
+                priority=0.7
+            )
+        elif typ in ('error', 'correction', 'gap'):
+            return lesson(
+                text=combined,
+                context=context,
+                priority=0.6
+            )
+        else:
+            return MemoryFragment(typ, combined, priority=0.5)
+    except Exception:
+        return None
+
+
 def capture(typ, title, content, context=''):
     """
     捕获记忆到 L2（文件）+ L4（Qdrant）
     同时写入文件（用于归档）和向量库（用于语义检索）
+    同时注册到 FragmentPool（使用正确类型片段）
     """
     timestamp = datetime.datetime.now().isoformat()
     today = datetime.datetime.now().strftime('%Y-%m-%d')
@@ -82,29 +126,36 @@ context: {context}
         f.write(entry)
 
     # 2. 同时写入 L4 Qdrant 向量库（通过 memory_store）
+    full_text = f"{title}\n{content}"
+    vector_stored = False
     try:
         from memory_store import get_store
         from memory_store import _update_synced_hash
         store = get_store()
-        # 合并 title + content 作为检索文本
-        full_text = f"{title}\n{content}"
         store.add(full_text, typ, source=filename.name, metadata={
             "title": title,
             "context": context,
             "date": today
         })
-        # 同步状态追踪，避免 vectorize_memories.py 重复处理
         _update_synced_hash(full_text)
+        vector_stored = True
     except Exception as e:
         print(f"⚠️  Qdrant 写入失败: {e}")
 
-    # 3. 注册到 FragmentPool（如果可用）
+    # 3. 注册到 FragmentPool（使用正确类型片段）
+    pool_ok = False
     try:
-        from memory_fragment import MemoryFragment
-        _pool = _get_fragment_pool()
-        if _pool:
-            frag = MemoryFragment(typ, f"{title}\n{content}", priority=0.7)
-            _pool.add(frag)
+        from memory_fragment import (
+            MemoryFragment, skill, task, config,
+            conclusion, lesson, MemoryFragment
+        )
+        pool = _get_fragment_pool()
+        if pool is not None:
+            # 根据 typ 选择正确的 typed fragment 工厂
+            frag = _make_typed_fragment(typ, title, content, context)
+            if frag:
+                pool.add(frag)
+                pool_ok = True
     except Exception:
         pass  # FragmentPool 不可用不影响主流程
 
@@ -115,10 +166,11 @@ context: {context}
         "title": title,
         "timestamp": timestamp,
         "file": str(filename),
-        "vector_stored": 'Qdrant写入成功' not in str(locals())
+        "vector_stored": vector_stored,
+        "fragment_pooled": pool_ok,
     }
 
-# FragmentPool 单例（lazy init）
+# FragmentPool 单例(lazy init)
 _fragment_pool = None
 def _get_fragment_pool():
     global _fragment_pool
@@ -132,28 +184,28 @@ def _get_fragment_pool():
 
 def search(query, typ=None, n_results=5):
     """
-    统一搜索入口 — L4/L10 混合检索
+    统一搜索入口 - L4/L10 混合检索
 
-    完整链路：
+    完整链路:
       hybrid_search (BM25 + Vector + RRF)
         → Ebbinghaus fluid_score 二次重排
         → 命中记忆自动强化 (reinforce)
         → 最终结果
 
-    typ 参数：只过滤向量结果（BM25 结果来自 markdown，不受 typ 影响）
+    typ 参数:只过滤向量结果(BM25 结果来自 markdown,不受 typ 影响)
     """
-    # 优先使用混合搜索（BM25 + Vector + RRF）
+    # 优先使用混合搜索(BM25 + Vector + RRF)
     try:
         from memory_hybrid import hybrid_search
         hybrid_results = hybrid_search(query, n_results=n_results * 3)
 
-        # typ 过滤（BM25 结果不区分 type，保持兼容性）
+        # typ 过滤(BM25 结果不区分 type,保持兼容性)
         if typ:
             hybrid_results = [r for r in hybrid_results
                            if r.get('type') == typ or r.get('method') == 'bm25']
 
         if hybrid_results:
-            # 在强化层注册这次访问（Ebbinghaus 强化）
+            # 在强化层注册这次访问(Ebbinghaus 强化)
             try:
                 from memory_reinforcement import reinforce
                 for r in hybrid_results[:n_results]:
@@ -162,7 +214,7 @@ def search(query, typ=None, n_results=5):
             except Exception:
                 pass  # 强化失败不影响搜索返回
 
-            # 重新 apply fluid_score 排序（hybrid 的 rrf_score 在前，fluid_score 调整）
+            # 重新 apply fluid_score 排序(hybrid 的 rrf_score 在前,fluid_score 调整)
             try:
                 from memory_reinforcement import calculate_fluid_score
                 for r in hybrid_results:
@@ -175,14 +227,14 @@ def search(query, typ=None, n_results=5):
             return hybrid_results[:n_results]
 
     except Exception as e:
-        print(f"⚠️  混合搜索失败: {e}，降级为向量搜索")
+        print(f"⚠️  混合搜索失败: {e},降级为向量搜索")
 
-    # 降级：纯向量 + Ebbinghaus
+    # 降级:纯向量 + Ebbinghaus
     try:
         from memory_reinforcement import search_with_fluid
         return search_with_fluid(query, n_results=n_results, memory_type=typ)
     except Exception as e2:
-        print(f"⚠️  向量搜索失败: {e2}，降级为普通向量")
+        print(f"⚠️  向量搜索失败: {e2},降级为普通向量")
         try:
             from memory_store import get_store
             return get_store().search(query, n_results=n_results, typ=typ)
@@ -192,14 +244,14 @@ def search(query, typ=None, n_results=5):
 
 def check_before_execute(command):
     """
-    执行前检查记忆：
-    1. 关键词搜索 L2 文件（errors/corrections/practices）
+    执行前检查记忆:
+    1. 关键词搜索 L2 文件(errors/corrections/practices)
     2. 语义搜索 L4 Qdrant 向量库
     """
     print(f"\n🔍 检查命令: {command}")
     found_any = False
 
-    # 1. L2 文件关键词匹配（预分词一次，避免重复 split）
+    # 1. L2 文件关键词匹配(预分词一次,避免重复 split)
     cmd_words = [w for w in command.split() if len(w) > 3]
     cmd_words_lower = {w: w.lower() for w in cmd_words}
 
@@ -214,14 +266,14 @@ def check_before_execute(command):
                 if content is None:
                     continue
 
-                # 关键词匹配（content.lower() 只计算一次）
+                # 关键词匹配(content.lower() 只计算一次)
                 content_lc = content.lower()
                 matched = [w for w in cmd_words if cmd_words_lower[w] in content_lc]
                 if matched:
                     print(f"\n⚠️  发现相关 {memory_type.upper()}:")
                     print(f"  文件: {md_file.name}")
                     _sep = ", "; print(f"  匹配词: {_sep.join(matched)}")
-                    # 提取标题（限制扫描前20行）
+                    # 提取标题(限制扫描前20行)
                     for line in content.split('\n')[:20]:
                         if line.startswith('title:'):
                             print(f"  {line}")
@@ -230,11 +282,11 @@ def check_before_execute(command):
             except Exception:
                 pass
 
-    # 2. L4 Qdrant 语义搜索（强化版 - 命中自动 boost）
+    # 2. L4 Qdrant 语义搜索(强化版 - 命中自动 boost)
     try:
         results = search(command, n_results=3)
         if results:
-            print(f"\n🔮 语义搜索结果（强化后）:")
+            print(f"\n🔮 语义搜索结果(强化后):")
             for r in results:
                 fluid = r.get('fluid_score', r.get('score'))
                 marker = " ★" if r.get('access_count', 0) > 0 else ""
@@ -250,7 +302,7 @@ def check_before_execute(command):
 
 def compress():
     """
-    压缩/清理：L2 文件超长时归档
+    压缩/清理:L2 文件超长时归档
     超过30天的记忆文件 → L3 归档目录
     """
     from datetime import timedelta
@@ -273,7 +325,7 @@ def compress():
                 md_file.rename(dest)
                 moved += 1
 
-    print(f"✅ 归档完成，共移动 {moved} 个文件到 {MEMORY_ARCHIVE_DIR}")
+    print(f"✅ 归档完成,共移动 {moved} 个文件到 {MEMORY_ARCHIVE_DIR}")
     return moved
 
 def count():

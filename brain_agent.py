@@ -333,6 +333,7 @@ class BrainAgent:
         """
         捕获记忆到 L2 文件 + L4 向量库
         同时写入文件、向量库，并返回结构化 fragment
+        自动判断是否需要创建胶囊（复杂任务→自动建议）
         """
         try:
             from memory_api import capture as api_capture
@@ -341,9 +342,34 @@ class BrainAgent:
             frag = self.create_fragment(typ, f"{title}\n{content}", priority=0.7)
             if frag and self.fragment_pool:
                 self.fragment_pool.add(frag)
-            return {"ok": True, "fragment": frag}
+
+            # 自动胶囊建议（复杂记忆自动注册到 capsules.json）
+            capsule_action = None
+            try:
+                suggestion = self.suggest_capsule(title, content, success=True)
+                if suggestion.get('action') == 'create':
+                    capsule_action = self._auto_create_capsule(
+                        title, typ, f"{title}\n{content}"
+                    )
+            except Exception:
+                pass
+
+            return {
+                "ok": True,
+                "fragment": frag,
+                "capsule_action": capsule_action,
+            }
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    def _auto_create_capsule(self, name: str, cap_type: str, pattern: str) -> dict:
+        """自动创建胶囊（写入 capsules.json）"""
+        try:
+            from capsule_manager import create_capsule as cm_create
+            cm_create(name, cap_type, pattern)
+            return {"action": "created", "name": name}
+        except Exception as e:
+            return {"action": "failed", "error": str(e)}
 
     # ── 11. Cron 周期调度 ────────────────────────────
 
@@ -442,6 +468,19 @@ class BrainAgent:
             "timestamp": datetime.datetime.now().isoformat(),
             "steps": [],
         }
+
+        # Step 0: 胶囊预检（检查是否有匹配的已有胶囊）
+        try:
+            from capsule_matcher import match_capsules
+            matched = match_capsules(task)
+            if matched:
+                result["steps"].append({
+                    "step": "capsule_hint",
+                    "matched_capsules": matched,
+                    "message": f"匹配到 {len(matched)} 个已有胶囊，建议复用"
+                })
+        except Exception:
+            pass
 
         # Step 1: 置信度评估
         conf = self.assess_confidence(task)
